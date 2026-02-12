@@ -1,1 +1,0 @@
-javascript:(function(){consttestInfo={currency:'DEM',memberAccount:'******EM_1982',gameID:22068,prizeType:'GRAND',prize:10000,grandCount:0,isGameJackpot:true};puremvc.Facade.getInstance().sendNotification('BroadcastEvent.receive',testInfo);})();
