@@ -1,0 +1,1 @@
+javascript:(function(){varbet=prompt("請輸入bet數值");if(bet!==null){try{console.log("ExecutingopenHelpwithbet=",bet);openHelp({bet:Number(bet),closeList:[]});}catch(e){console.error("openHelp執行失敗：",e);alert("openHelp無法執行，請確認此頁面是否有定義openHelp()");}}})();
