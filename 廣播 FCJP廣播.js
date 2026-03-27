@@ -1,1 +1,1 @@
-javascript:(function(){consttestInfo={memberAccount:'*ui',OString:176,WinPoint:31752,userPls:0,prizeType:'GRAND',detail:{},type:'jackpot',prize:666600,ts:1756363274036,status:1};puremvc.Facade.getInstance().sendNotification('BroadcastEvent.receive',testInfo))();
+javascript:(function(){consttestInfo={memberAccount:'*ui',OString:176,WinPoint:31752,userPls:0,prizeType:'GRAND',detail:{},type:'jackpot',prize:666600,ts:1756363274036,status:1};puremvc.Facade.getInstance().sendNotification('BroadcastEvent.receive',testInfo)})();
