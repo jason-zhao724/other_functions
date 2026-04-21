@@ -1,7 +1,13 @@
 (function() {
     'use strict';
 
-    // 定義 localStorage 輔助函式，取代 GM_getValue/SetValue
+    // 1. 取得 URL 參數的工具
+    const getParam = (name) => new URLSearchParams(window.location.search).get(name);
+
+    // 2. 判斷目前是否正在執行檢查
+    // 優先檢查 URL 是否帶有 vc_run=1，如果有，則強行同步到 localStorage
+    let isRunning = getParam('vc_run') === '1';
+    
     const storage = {
         set: (key, val) => localStorage.setItem(key, JSON.stringify(val)),
         get: (key, def) => {
@@ -9,6 +15,19 @@
             return val ? JSON.parse(val) : def;
         }
     };
+
+    if (isRunning) {
+        storage.set('vc_is_checking', true);
+        // 如果 URL 有帶版本資訊，也順便存起來
+        const urlVer = getParam('vc_ver');
+        const urlId = getParam('vc_id');
+        const urlName = getParam('vc_name');
+        if (urlId && urlVer) {
+            storage.set('vc_current_target', { id: urlId, ver: urlVer, name: urlName || '' });
+        }
+    } else {
+        isRunning = storage.get('vc_is_checking', false);
+    }
 
     const styleText = `
         #vc-panel {
@@ -48,7 +67,7 @@
         const savedSpeed = storage.get('vc_test_speed', 5);
         container.innerHTML = `
             <button id="vc-close-btn">×</button>
-            <div style="font-size:16px; font-weight:bold; margin-bottom:12px; border-bottom:1px solid #ccc; padding-bottom:6px;">🧪 版本驗證與投注測試 v3.7 (GitHub版)</div>
+            <div style="font-size:16px; font-weight:bold; margin-bottom:12px; border-bottom:1px solid #ccc; padding-bottom:6px;">🧪 版本驗證與投注測試 v3.8 (跨網域版)</div>
             <div class="setting-row">
                 <span>投注局數:</span><input type="number" id="vc-rounds" value="${savedRounds}" min="0" style="width:50px; border:1px solid #ccc;">
                 <span>倍速:</span>
@@ -91,11 +110,13 @@
         const roundsInp = document.getElementById('vc-rounds');
         const speedSel = document.getElementById('vc-speed');
 
-        const isRunning = storage.get('vc_is_checking', false);
         const results = storage.get('vc_results', []);
         inputArea.value = storage.get('vc_input_raw', '');
 
-        document.getElementById('vc-close-btn').onclick = () => document.getElementById('vc-panel').remove();
+        document.getElementById('vc-close-btn').onclick = () => {
+            storage.set('vc_is_checking', false);
+            document.getElementById('vc-panel').remove();
+        };
 
         function startSpinMonitor() {
             const handler = (event) => {
@@ -110,29 +131,34 @@
             window.addEventListener('message', handler);
         }
 
+        // 修改後的跳轉邏輯：將狀態帶入 URL
+        function doChangeGame(target) {
+            storage.set('vc_current_target', target);
+            if (typeof window.changeGame === 'function') {
+                // 修改 changeGame 行為，讓它產生的 URL 帶有我們的參數
+                const originalUrl = window.location.href;
+                window.changeGame(target.id);
+                
+                // 因為 changeGame 通常是透過修改 location.href，我們需要攔截並補上參數
+                setTimeout(() => {
+                    const currentUrl = new URL(window.location.href);
+                    if (!currentUrl.searchParams.has('vc_run')) {
+                        currentUrl.searchParams.set('vc_run', '1');
+                        currentUrl.searchParams.set('vc_id', target.id);
+                        currentUrl.searchParams.set('vc_ver', target.ver);
+                        currentUrl.searchParams.set('vc_name', target.name);
+                        window.location.href = currentUrl.toString();
+                    }
+                }, 100);
+            }
+        }
+
         function processNext() {
             let queue = storage.get('vc_queue', []);
             if (queue.length === 0) { finishAndShow(); return; }
             const next = queue.shift();
             storage.set('vc_queue', queue);
-            storage.set('vc_current_target', next);
-            if (typeof window.changeGame === 'function') window.changeGame(next.id);
-        }
-
-        function resetToInitial() {
-            storage.set('vc_is_checking', false);
-            storage.set('vc_results', []);
-            storage.set('vc_queue', []);
-            displayArea.style.display = 'none';
-            inputArea.style.display = 'block';
-            inputArea.disabled = false;
-            roundsInp.disabled = false;
-            speedSel.disabled = false;
-            runBtn.innerText = "執行檢查";
-            runBtn.disabled = false;
-            clearStopBtn.innerText = "清空";
-            clearStopBtn.disabled = false;
-            clearStopBtn.classList.remove('vc-btn-stop');
+            doChangeGame(next);
         }
 
         function finishAndShow() {
@@ -145,7 +171,6 @@
             runBtn.disabled = false;
             clearStopBtn.innerText = "清空";
             clearStopBtn.disabled = true;
-            clearStopBtn.classList.remove('vc-btn-stop');
             roundsInp.disabled = true;
             speedSel.disabled = true;
         }
@@ -155,7 +180,6 @@
             runBtn.disabled = true;
             runBtn.innerText = "測試進行中...";
             clearStopBtn.innerText = "終止";
-            clearStopBtn.disabled = false;
             clearStopBtn.classList.add('vc-btn-stop');
             roundsInp.disabled = true;
             speedSel.disabled = true;
@@ -179,7 +203,7 @@
                 window.callbackLog = function(src, msg) {
                     if (msg === 'Start Game!') {
                         const rounds = Number(storage.get('vc_test_rounds', 0));
-                        const speed = storage.get('vc_test_speed', 5);
+                        const speed = Number(storage.get('vc_test_speed', 5));
                         if (rounds > 0) { startSpinMonitor(); setTimeout(() => applyAutoSettings(rounds, speed), 1000); }
                         else { setTimeout(processNext, 1000); }
                     }
@@ -190,8 +214,10 @@
         }
 
         runBtn.onclick = () => {
-            if (runBtn.innerText === "重新檢查") { resetToInitial(); }
-            else {
+            if (runBtn.innerText === "重新檢查") {
+                storage.set('vc_results', []);
+                location.reload();
+            } else {
                 const lines = inputArea.value.trim().split('\n');
                 const queue = lines.map(l => {
                     const p = l.trim().split(/\s+/);
@@ -199,21 +225,31 @@
                     return { id: p[0], ver: p[p.length - 1], name: p.slice(1, -1).join(' ') };
                 }).filter(x => x);
                 if (queue.length === 0) return alert('格式錯誤！');
+                
                 storage.set('vc_input_raw', inputArea.value);
                 storage.set('vc_test_rounds', roundsInp.value);
                 storage.set('vc_test_speed', speedSel.value);
                 storage.set('vc_is_checking', true);
                 storage.set('vc_results', []);
+                
                 const first = queue.shift();
                 storage.set('vc_queue', queue);
-                storage.set('vc_current_target', first);
-                if (typeof window.changeGame === 'function') window.changeGame(first.id);
+                doChangeGame(first);
             }
         };
 
         clearStopBtn.onclick = () => {
-            if (clearStopBtn.innerText === "終止") { if (confirm("確定終止？")) resetToInitial(); }
-            else if (!clearStopBtn.disabled) { inputArea.value = ''; storage.set('vc_input_raw', ''); storage.set('vc_results', []); }
+            if (clearStopBtn.innerText === "終止") {
+                if (confirm("確定終止？")) {
+                    storage.set('vc_is_checking', false);
+                    storage.set('vc_results', []);
+                    location.reload();
+                }
+            } else if (!clearStopBtn.disabled) {
+                inputArea.value = '';
+                storage.set('vc_input_raw', '');
+                storage.set('vc_results', []);
+            }
         };
     }
 
