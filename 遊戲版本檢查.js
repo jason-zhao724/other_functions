@@ -1,35 +1,21 @@
-// ==UserScript==
-// @name         遊戲版本檢查與投注測試工具
-// @namespace    http://tampermonkey.net/
-// @version      3.7
-// @description  支援局數設定為 0 時僅檢查版本號而不進行投注
-// @author       Gemini
-// @match        https://lab-web.gdg168.com/*
-// @match        https://qa-web.mearhh.com/*
-// @match        https://qa2-web.mearhh.com/*
-// @match        https://web.fcg666.net/*
-// @include      https://qjjx79m8-game.*.com/*
-// @include      https://xujef8m9-game.*.com/*
-// @include      https://a6hzy7rm-game.*.com/*
-// @include      https://gk9xz5df-game.*.net/*
-// @grant        GM_setValue
-// @grant        GM_getValue
-// @grant        unsafeWindow
-// @run-at       document-start
-// ==/UserScript==
-
 (function() {
     'use strict';
 
-    if (window.self !== window.top) return;
+    // 定義 localStorage 輔助函式，取代 GM_getValue/SetValue
+    const storage = {
+        set: (key, val) => localStorage.setItem(key, JSON.stringify(val)),
+        get: (key, def) => {
+            const val = localStorage.getItem(key);
+            return val ? JSON.parse(val) : def;
+        }
+    };
 
-    // --- UI 樣式設定 ---
     const styleText = `
         #vc-panel {
-            position: fixed !important; top: 10px !important; left: 10px !important; z-index: 2147483647 !important;
+            position: fixed !important; top: 20px !important; left: 20px !important; z-index: 2147483647 !important;
             background: white !important; border: 2px solid #333 !important; padding: 15px !important;
-            width: 250px !important; height: auto !important;
-            box-shadow: -5px 5px 15px rgba(0,0,0,0.5) !important;
+            width: 500px !important; height: auto !important;
+            box-shadow: 5px 5px 15px rgba(0,0,0,0.5) !important;
             border-radius: 10px !important; font-family: sans-serif !important; color: black !important;
             display: flex !important; flex-direction: column !important;
         }
@@ -41,10 +27,8 @@
         .vc-fail { color: #b71c1c; background: #ffebee; border-left: 5px solid #d32f2f; }
         .vc-status-icon { position: absolute !important; right: 20px !important; top: 50% !important; transform: translateY(-50%) !important; font-size: 28px !important; font-weight: bold !important; }
         .setting-row { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; font-size: 13px; }
-        .setting-row input, .setting-row select { padding: 4px; border: 1px solid #ccc; border-radius: 4px; }
-        .setting-row input:disabled, .setting-row select:disabled { background: #eee; cursor: not-allowed; }
         .btn-group { display: flex; gap: 10px; }
-        .vc-btn { flex: 1; padding: 6px; cursor: pointer; background: #eee; border: 1px solid #666; font-weight: bold; border-radius: 4px; }
+        .vc-btn { flex: 1; padding: 6px !important; cursor: pointer; background: #eee; border: 1px solid #666; font-weight: bold; border-radius: 4px; }
         .vc-btn:disabled { opacity: 0.5; cursor: not-allowed; color: #999; }
         .vc-btn-stop { color: #b71c1c !important; border-color: #b71c1c !important; }
     `;
@@ -55,20 +39,16 @@
             requestAnimationFrame(ensureUI);
             return;
         }
-
         const style = document.createElement('style');
         style.textContent = styleText;
         document.head.appendChild(style);
-
         const container = document.createElement('div');
         container.id = 'vc-panel';
-
-        const savedRounds = GM_getValue('vc_test_rounds', 5);
-        const savedSpeed = GM_getValue('vc_test_speed', 2);
-
+        const savedRounds = storage.get('vc_test_rounds', 8);
+        const savedSpeed = storage.get('vc_test_speed', 5);
         container.innerHTML = `
             <button id="vc-close-btn">×</button>
-            <div style="font-size:16px; font-weight:bold; margin-bottom:12px; border-bottom:1px solid #ccc; padding-bottom:6px;">版本檢查</div>
+            <div style="font-size:16px; font-weight:bold; margin-bottom:12px; border-bottom:1px solid #ccc; padding-bottom:6px;">🧪 版本驗證與投注測試 v3.7 (GitHub版)</div>
             <div class="setting-row">
                 <span>投注局數:</span><input type="number" id="vc-rounds" value="${savedRounds}" min="0" style="width:50px; border:1px solid #ccc;">
                 <span>倍速:</span>
@@ -93,17 +73,14 @@
 
     function applyAutoSettings(rounds, speed) {
         try {
-            const facade = unsafeWindow.puremvc.Facade.getInstance();
+            const facade = window.puremvc.Facade.getInstance();
             const proxy = facade.model.proxyMap;
             proxy.ControlProxy.setAutoTimes(Number(rounds));
             proxy.GameDataProxy.gameSpeed = Number(speed);
             proxy.GameDataProxy.turboMode = true;
             proxy.GameDataProxy.superTurboMode = false;
             facade.sendNotification('SlotEvent.sendBetRequest');
-            console.log(`🎯 套用設定: ${rounds}局 / ${speed}x`);
-        } catch (e) {
-            console.warn('❌ 套用失敗', e);
-        }
+        } catch (e) { console.warn('❌ 套用失敗', e); }
     }
 
     function setupLogic() {
@@ -114,43 +91,38 @@
         const roundsInp = document.getElementById('vc-rounds');
         const speedSel = document.getElementById('vc-speed');
 
-        const isRunning = GM_getValue('vc_is_checking', false);
-        const results = GM_getValue('vc_results', []);
-        inputArea.value = GM_getValue('vc_input_raw', '');
+        const isRunning = storage.get('vc_is_checking', false);
+        const results = storage.get('vc_results', []);
+        inputArea.value = storage.get('vc_input_raw', '');
 
         document.getElementById('vc-close-btn').onclick = () => document.getElementById('vc-panel').remove();
 
         function startSpinMonitor() {
-            const messageHandler = (event) => {
+            const handler = (event) => {
                 try {
-                    const proxy = unsafeWindow.puremvc.Facade.getInstance().model.proxyMap;
+                    const proxy = window.puremvc.Facade.getInstance().model.proxyMap;
                     if (event.data === 'spinEnded' && proxy.GameDataProxy.curAutoTimes === 0) {
-                        window.removeEventListener('message', messageHandler);
+                        window.removeEventListener('message', handler);
                         setTimeout(processNext, 1000);
                     }
                 } catch (e) {}
             };
-            window.addEventListener('message', messageHandler);
+            window.addEventListener('message', handler);
         }
 
         function processNext() {
-            let queue = GM_getValue('vc_queue', []);
-            if (queue.length === 0) {
-                finishAndShow();
-                return;
-            }
+            let queue = storage.get('vc_queue', []);
+            if (queue.length === 0) { finishAndShow(); return; }
             const next = queue.shift();
-            GM_setValue('vc_queue', queue);
-            GM_setValue('vc_current_target', next);
-            if (typeof unsafeWindow.changeGame === 'function') {
-                unsafeWindow.changeGame(next.id);
-            }
+            storage.set('vc_queue', queue);
+            storage.set('vc_current_target', next);
+            if (typeof window.changeGame === 'function') window.changeGame(next.id);
         }
 
         function resetToInitial() {
-            GM_setValue('vc_is_checking', false);
-            GM_setValue('vc_results', []);
-            GM_setValue('vc_queue', []);
+            storage.set('vc_is_checking', false);
+            storage.set('vc_results', []);
+            storage.set('vc_queue', []);
             displayArea.style.display = 'none';
             inputArea.style.display = 'block';
             inputArea.disabled = false;
@@ -164,15 +136,11 @@
         }
 
         function finishAndShow() {
-            GM_setValue('vc_is_checking', false);
-            const res = GM_getValue('vc_results', []);
+            storage.set('vc_is_checking', false);
+            const res = storage.get('vc_results', []);
             displayArea.style.display = 'block';
             inputArea.style.display = 'none';
-            displayArea.innerHTML = res.map(r => `
-                <div class="vc-row ${r.status === 'OK' ? 'vc-success' : 'vc-fail'}">
-                    ${r.text} <span class="vc-status-icon">${r.icon}</span>
-                </div>
-            `).join('');
+            displayArea.innerHTML = res.map(r => `<div class="vc-row ${r.status === 'OK' ? 'vc-success' : 'vc-fail'}">${r.text} <span class="vc-status-icon">${r.icon}</span></div>`).join('');
             runBtn.innerText = "重新檢查";
             runBtn.disabled = false;
             clearStopBtn.innerText = "清空";
@@ -185,7 +153,7 @@
         if (isRunning) {
             inputArea.style.display = 'none';
             runBtn.disabled = true;
-            runBtn.innerText = "進行中...";
+            runBtn.innerText = "測試進行中...";
             clearStopBtn.innerText = "終止";
             clearStopBtn.disabled = false;
             clearStopBtn.classList.add('vc-btn-stop');
@@ -193,92 +161,61 @@
             speedSel.disabled = true;
 
             const verCheckTimer = setInterval(() => {
-                const info = unsafeWindow.gameSetting;
-                const current = GM_getValue('vc_current_target');
+                const info = window.gameSetting;
+                const current = storage.get('vc_current_target');
                 if (info && info.version && current) {
                     clearInterval(verCheckTimer);
-                    const actualVer = info.version[current.id] || "N/A";
                     const actualTxt = info.versionTxt || "N/A";
-                    const isMatch = (String(actualVer) === String(current.ver) && String(actualTxt) === String(current.ver));
-
-                    let currentResults = GM_getValue('vc_results', []);
-                    currentResults.push({
-                        status: isMatch ? 'OK' : 'FAIL',
-                        icon: isMatch ? '✓' : '✗',
-                        text: `<b>${current.id} ${current.name}</b><br>預期: ${current.ver}<br>實際: ${actualTxt}`
-                    });
-                    GM_setValue('vc_results', currentResults);
+                    const isMatch = (String(info.version[current.id]) === String(current.ver) && String(actualTxt) === String(current.ver));
+                    let currentResults = storage.get('vc_results', []);
+                    currentResults.push({ status: isMatch ? 'OK' : 'FAIL', icon: isMatch ? '✓' : '✗', text: `<b>${current.id} ${current.name}</b><br>預期: ${current.ver}<br>實際: ${actualTxt}` });
+                    storage.set('vc_results', currentResults);
                 }
             }, 1000);
 
             const flowTimer = setInterval(() => {
                 if (!document.querySelector('#Cocos2dGameContainer')) return;
                 clearInterval(flowTimer);
-                unsafeWindow.callbackLog = function(src, msg) {
+                window.callbackLog = function(src, msg) {
                     if (msg === 'Start Game!') {
-                        const rounds = Number(GM_getValue('vc_test_rounds', 0));
-                        const speed = GM_getValue('vc_test_speed', 5);
-
-                        // --- 核心修正：局數為 0 則跳過投注 ---
-                        if (rounds > 0) {
-                            console.log(`🚀 收到 Start Game!，啟動投注測試 (${rounds}局)...`);
-                            startSpinMonitor();
-                            setTimeout(() => applyAutoSettings(rounds, speed), 1000);
-                        } else {
-                            console.log("ℹ️ 收到 Start Game!，局數設定為 0，跳過投注測試。");
-                            setTimeout(processNext, 1000);
-                        }
+                        const rounds = Number(storage.get('vc_test_rounds', 0));
+                        const speed = storage.get('vc_test_speed', 5);
+                        if (rounds > 0) { startSpinMonitor(); setTimeout(() => applyAutoSettings(rounds, speed), 1000); }
+                        else { setTimeout(processNext, 1000); }
                     }
                 };
             }, 300);
-
         } else if (results.length > 0) {
             finishAndShow();
         }
 
         runBtn.onclick = () => {
-            if (runBtn.innerText === "重新檢查") {
-                resetToInitial();
-            } else {
+            if (runBtn.innerText === "重新檢查") { resetToInitial(); }
+            else {
                 const lines = inputArea.value.trim().split('\n');
                 const queue = lines.map(l => {
                     const p = l.trim().split(/\s+/);
                     if (p.length < 2) return null;
                     return { id: p[0], ver: p[p.length - 1], name: p.slice(1, -1).join(' ') };
                 }).filter(x => x);
-
                 if (queue.length === 0) return alert('格式錯誤！');
-
-                GM_setValue('vc_input_raw', inputArea.value);
-                GM_setValue('vc_test_rounds', roundsInp.value);
-                GM_setValue('vc_test_speed', speedSel.value);
-                GM_setValue('vc_is_checking', true);
-                GM_setValue('vc_results', []);
-
+                storage.set('vc_input_raw', inputArea.value);
+                storage.set('vc_test_rounds', roundsInp.value);
+                storage.set('vc_test_speed', speedSel.value);
+                storage.set('vc_is_checking', true);
+                storage.set('vc_results', []);
                 const first = queue.shift();
-                GM_setValue('vc_queue', queue);
-                GM_setValue('vc_current_target', first);
-                if (typeof unsafeWindow.changeGame === 'function') {
-                    unsafeWindow.changeGame(first.id);
-                }
+                storage.set('vc_queue', queue);
+                storage.set('vc_current_target', first);
+                if (typeof window.changeGame === 'function') window.changeGame(first.id);
             }
         };
 
         clearStopBtn.onclick = () => {
-            if (clearStopBtn.innerText === "終止") {
-                if (confirm("確定要終止目前所有流程嗎？")) {
-                    resetToInitial();
-                }
-            } else {
-                if (!clearStopBtn.disabled) {
-                    inputArea.value = '';
-                    GM_setValue('vc_input_raw', '');
-                    GM_setValue('vc_results', []);
-                }
-            }
+            if (clearStopBtn.innerText === "終止") { if (confirm("確定終止？")) resetToInitial(); }
+            else if (!clearStopBtn.disabled) { inputArea.value = ''; storage.set('vc_input_raw', ''); storage.set('vc_results', []); }
         };
     }
 
     requestAnimationFrame(ensureUI);
-
 })();
