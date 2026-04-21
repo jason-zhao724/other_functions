@@ -160,29 +160,65 @@
         }, 300);
         
         // --- 重新檢查按鈕邏輯 ---
-        runBtn.onclick = () => {
-            if (runBtn.innerText === "重新檢查") {
-                storage.set('vc_results', []);
-                location.reload();
+        // --- 在 setupLogic 函式內尋找並更新 runBtn.onclick ---
+runBtn.onclick = () => {
+    if (runBtn.innerText === "重新檢查") {
+        storage.set('vc_results', []);
+        location.reload();
+    } else {
+        const lines = inputArea.value.trim().split('\n');
+        const queue = lines.map(l => {
+            const p = l.trim().split(/\s+/);
+            if (p.length < 2) return null;
+            return { id: p[0], ver: p[p.length - 1], name: p.slice(1, -1).join(' ') };
+        }).filter(x => x);
+
+        if (queue.length === 0) return alert('格式錯誤！');
+        
+        // 1. 儲存設定
+        storage.set('vc_input_raw', inputArea.value);
+        storage.set('vc_test_rounds', roundsInp.value);
+        storage.set('vc_test_speed', speedSel.value);
+        storage.set('vc_is_checking', true);
+        storage.set('vc_results', []);
+        
+        const first = queue.shift();
+        storage.set('vc_queue', queue);
+        storage.set('vc_current_target', first);
+
+        // 2. 執行跳轉 (強化版呼叫邏輯)
+        console.log("🚀 準備執行跳轉:", first.id);
+        
+        // 嘗試多種方式呼叫 changeGame
+        const targetId = first.id;
+        const triggerChange = () => {
+            if (typeof window.changeGame === 'function') {
+                window.changeGame(targetId);
+            } else if (typeof unsafeWindow !== 'undefined' && typeof unsafeWindow.changeGame === 'function') {
+                unsafeWindow.changeGame(targetId);
             } else {
-                const lines = inputArea.value.trim().split('\n');
-                const queue = lines.map(l => {
-                    const p = l.trim().split(/\s+/);
-                    if (p.length < 2) return null;
-                    return { id: p[0], ver: p[p.length - 1], name: p.slice(1, -1).join(' ') };
-                }).filter(x => x);
-                if (queue.length === 0) return alert('格式錯誤！');
-                storage.set('vc_input_raw', inputArea.value);
-                storage.set('vc_test_rounds', roundsInp.value);
-                storage.set('vc_test_speed', speedSel.value);
-                storage.set('vc_is_checking', true);
-                storage.set('vc_results', []);
-                const first = queue.shift();
-                storage.set('vc_queue', queue);
-                storage.set('vc_current_target', first);
-                processNext();
+                // 最後手段：嘗試透過 location 跳轉參數 (假設平台支援)
+                const url = new URL(window.location.href);
+                url.searchParams.set('gameId', targetId);
+                window.location.href = url.toString();
             }
         };
+
+        triggerChange();
+
+        // 3. 強制補上跨網域接力參數 (重要：確保跳轉後的 URL 帶有 vc_run=1)
+        setTimeout(() => {
+            const url = new URL(window.location.href);
+            if (!url.searchParams.has('vc_run')) {
+                url.searchParams.set('vc_run', '1');
+                url.searchParams.set('vc_id', first.id);
+                url.searchParams.set('vc_ver', first.ver);
+                url.searchParams.set('vc_name', first.name);
+                window.location.href = url.toString();
+            }
+        }, 300);
+    }
+};
         
         function finishAndShow() { /* 同 v3.9 邏輯 */ }
     }
