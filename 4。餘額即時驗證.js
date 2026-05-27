@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         遊戲餘額即時驗證驗證工具test
+// @name         遊戲餘額即時驗證驗證工具
 // @namespace    http://tampermonkey.net/
-// @version      2.4
-// @description  
+// @version      2.6
+// @description
 // @author       YourName
 // @match        http://*/*
 // @match        https://*/*
@@ -23,6 +23,7 @@
     let currentWinBase = 0;
     let currentWinFree = 0;
     let currentWinBonus = 0;
+    let currentSpinJackpot = 0; // 遊戲內依附型 Jackpot 快取
     let currentTotalWin = 0;
     let currentSeqNo = "等待中";
     let serverUserPoint = 0;
@@ -48,7 +49,7 @@
         isInitialized = true;
     }
 
-    // 輸出完整對帳單 (視覺淨化：八行合一純文字版)
+    // 輸出完整對帳單 (視覺淨化：九行合一純文字版)
     function printFinalReport(titleText, reportLines, isError = false) {
         const logColor = isError ? "#FF5252" : "#4CAF50";
         const finalTitle = isError ? `[餘額驗證失敗] ${titleText}` : `[餘額驗證通過] ${titleText}`;
@@ -102,14 +103,15 @@
                         currentWinBase = resultData.totalWinBase || 0;
                         currentWinFree = resultData.totalWinFree || 0;
                         currentWinBonus = resultData.totalWinBonus || 0;
+                        currentSpinJackpot = resultData.jackpotHitAmount || 0; // 讀取遊戲內內嵌的 Jackpot 贏分
                         currentTotalWin = resultData.totalWin || 0;
                         currentSeqNo = resultData.gameSeqNo || "未知局號";
                         serverUserPoint = resultData.userPoint || 0;
 
-                        // 驗證贏分橫向加總是否正確
-                        const calculatedTotalWin = currentWinBase + currentWinFree + currentWinBonus;
+                        // 驗證所有贏分細項橫向加總 (包含一般、免費、紅利與遊戲內 Jackpot)
+                        const calculatedTotalWin = currentWinBase + currentWinFree + currentWinBonus + currentSpinJackpot;
                         if (calculatedTotalWin !== currentTotalWin) {
-                            const errorMsg = `贏分加總異常！計算:${calculatedTotalWin} (${currentWinBase}+${currentWinFree}+${currentWinBonus}) 實際:${currentTotalWin}`;
+                            const errorMsg = `贏分加總異常！計算:${calculatedTotalWin} (${currentWinBase}+${currentWinFree}+${currentWinBonus}+${currentSpinJackpot}) 實際:${currentTotalWin}`;
                             originalLog(`%c[餘額驗證失敗] ${errorMsg}`, "color: red; font-weight: bold;");
                             alert(`局號: ${currentSeqNo}\n${errorMsg}`);
                             return;
@@ -120,17 +122,18 @@
 
                         const isBalanceAbnormal = expectedBalance !== serverUserPoint;
 
-                        // 組裝淨化報表
+                        // 🌟 修改：不論有沒有中 Jackpot，所有欄位都固定輸出，沒中則顯示 0.00
                         const report = [
-							`1. SPIN前餘額	: ${(spinStartBalance/100).toFixed(2)}`,
-							`2. 總押分(投注)	: ${(lastBet/100).toFixed(2)}`,
-							`3. 一般遊戲贏分	: ${(currentWinBase/100).toFixed(2)}`,
-							`4. 免費遊戲贏分	: ${(currentWinFree/100).toFixed(2)}`,
-							`5. 紅利遊戲贏分	: ${(currentWinBonus/100).toFixed(2)}`,
-							`6. 本局總贏分	: ${(currentTotalWin/100).toFixed(2)}`,
-							`7. 伺服器餘額	: ${(serverUserPoint/100).toFixed(2)}`,
-							`8. 預期餘額		: ${(expectedBalance/100).toFixed(2)}`
-						];
+                            `1. SPIN前餘額	: ${(spinStartBalance/100).toFixed(2)}`,
+                            `2. 總押分(投注)	: ${(lastBet/100).toFixed(2)}`,
+                            `3. 一般遊戲贏分	: ${(currentWinBase/100).toFixed(2)}`,
+                            `4. 免費遊戲贏分	: ${(currentWinFree/100).toFixed(2)}`,
+                            `5. 紅利遊戲贏分	: ${(currentWinBonus/100).toFixed(2)}`,
+                            `6. 遊戲內彩金贏分: ${(currentSpinJackpot/100).toFixed(2)}`,
+                            `7. 本局總贏分	: ${(currentTotalWin/100).toFixed(2)}`,
+                            `8. 伺服器餘額	: ${(serverUserPoint/100).toFixed(2)}`,
+                            `9. 預期餘額		: ${(expectedBalance/100).toFixed(2)}`
+                        ];
 
                         printFinalReport(`局號: ${currentSeqNo}`, report, isBalanceAbnormal);
 
@@ -141,7 +144,7 @@
                 }
             }
 
-            // 🌟 3. 監聽 EV_SC_JACKPOT_DRAW (隨機 Jackpot 幸運彩金封包)
+            // 3. 監聽 EV_SC_JACKPOT_DRAW (隨機 Jackpot 幸運彩金封包)
             if (logString.includes("EV_SC_JACKPOT_DRAW")) {
                 try {
                     const jsonMatch = logString.match(/result:\s*(\{.*?\})\s*$/, '');
@@ -160,7 +163,7 @@
 
                         const isBalanceAbnormal = expectedBalance !== serverUserPoint;
 
-                        // 組裝隨機 Jackpot 的專屬報表 (項目精簡優化，聚焦於彩金)
+                        // 組裝隨機 Jackpot 的專屬報表
                         const jpReport = [
                             `1. 彩金前餘額	: ${(spinStartBalance/100).toFixed(2)}`,
                             `2. 獲得彩金種類	: ${jpType}`,
